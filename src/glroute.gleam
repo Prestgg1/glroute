@@ -2,10 +2,19 @@ import gdantic_ai/agent.{type Agent}
 import gdantic_ai/errors.{type GdanticError}
 import gdantic_ai/usage.{type RunResult}
 import glroute/parallel
-import glroute/route
+import glroute/server
+
+// ---------------------------------------------------------------------------
+// glroute - lightweight parallel LLM router
+//
+// Parallel = BEAM concurrent request handling (not fan-out to all models)
+// The OpenAI-compatible server handles each incoming HTTP request in its
+// own Erlang process, so multiple clients can call concurrently.
+// Per-request routing is Priority (sequential fallback).
+// ---------------------------------------------------------------------------
 
 pub fn main() {
-  // Placeholder - see examples/
+  // See examples/
   Nil
 }
 
@@ -24,35 +33,30 @@ pub fn route_priority(
 }
 
 // ---------------------------------------------------------------------------
-// Parallel routing - true concurrent fan-out
+// Server - OpenAI-compatible address with parallel request handling
 // ---------------------------------------------------------------------------
 
-/// Run all agents concurrently, collect all results.
-/// Unlike OmniRoute (sequential), this fans out in parallel via Erlang processes.
-pub fn route_parallel(
-  agents: List(Agent(deps, output)),
-  prompt: String,
-  deps: deps,
-) -> ParallelResult(output) {
-  parallel.route_parallel(agents, prompt, deps)
+/// Start server on port with given agents.
+/// Each incoming HTTP request is handled in its own BEAM process,
+/// so parallel requests from multiple clients are served concurrently.
+///
+/// The server exposes:
+/// - POST /v1/chat/completions (OpenAI-compatible)
+/// - GET  /v1/models
+/// - GET  /health
+///
+/// Example: `glroute.serve(agents, 3000)` → clients use
+/// `base_url = "http://localhost:3000/v1"` as OpenAI compatible address.
+pub fn serve(agents: List(Agent(Nil, String)), port: Int) -> Result(Nil, String) {
+  server.serve(agents, port)
 }
 
-/// Parallel with custom timeout per target (ms)
-pub fn route_parallel_with_timeout(
-  agents: List(Agent(deps, output)),
-  prompt: String,
-  deps: deps,
-  timeout_ms: Int,
-) -> ParallelResult(output) {
-  parallel.route_parallel_with_timeout(agents, prompt, deps, timeout_ms)
+pub fn serve_with_config(
+  agents: List(Agent(Nil, String)),
+  config: ServerConfig,
+) -> Result(Nil, String) {
+  server.serve_with_config(agents, config)
 }
 
-// Re-exports
-pub type ParallelResult(output) =
-  route.ParallelResult(output)
-
-pub type TargetResult(output) =
-  route.TargetResult(output)
-
-pub type Strategy =
-  route.Strategy
+pub type ServerConfig =
+  server.ServerConfig
