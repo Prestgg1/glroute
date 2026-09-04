@@ -3,10 +3,8 @@ version = "0.1.0"
 target = "erlang"
 description = "Lightweight LLM router for Gleam - priority fallback with BEAM concurrent request handling"
 
-licenses = ["Apache-2.0"]
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "Prestgg1", repo = "glroute" }
-links = [{ title = "GitHub", href = "https://github.com/Prestgg1/glroute" }]
 
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
