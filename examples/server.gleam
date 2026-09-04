@@ -1,7 +1,7 @@
-import gdantic_ai/agent
-import gdantic_ai/provider
 import gleam/erlang/process
 import glroute
+import glroute/agent
+import glroute/provider
 
 pub fn main() {
   // Server with custom OpenAI-compatible address

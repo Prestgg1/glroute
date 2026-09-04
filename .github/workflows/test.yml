@@ -12,12 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout gdantic_ai (path dependency)
-        run: |
-          if [ ! -d "../gdantic_ai" ]; then
-            git clone https://github.com/Prestgg1/gdantic_ai.git ../gdantic_ai
-          fi
-          ls -la ../gdantic_ai
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "28"

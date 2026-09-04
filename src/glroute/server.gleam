@@ -1,6 +1,3 @@
-import gdantic_ai/agent.{type Agent}
-import gdantic_ai/errors as gdantic_ai_errors
-import gdantic_ai/usage.{type RunResult}
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/dynamic/decode
@@ -11,38 +8,42 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
-import glroute/parallel
+import glroute/agent.{type Agent}
+import glroute/errors as glroute_errors
+import glroute/strategies/priority
+import glroute/usage.{type RunResult}
 import mist
 
 // ---------------------------------------------------------------------------
-// Server - OpenAI-compatible address that handles parallel requests via BEAM
-// Each incoming HTTP request runs in its own Erlang process automatically
-// (mist + BEAM scheduler), so multiple clients can call concurrently
-// without blocking each other. This is the correct "parallel" — not fan-out
-// to all models, but concurrent handling of incoming requests.
+// Server - OpenAI-compatible address with CORS & API key security
 // ---------------------------------------------------------------------------
 
 pub type ServerConfig {
-  ServerConfig(port: Int, host: String)
+  ServerConfig(
+    port: Int,
+    host: String,
+    api_key: Option(String),
+    allowed_origin: Option(String),
+  )
 }
 
 pub fn default_config(port: Int) -> ServerConfig {
-  ServerConfig(port: port, host: "0.0.0.0")
+  ServerConfig(
+    port: port,
+    host: "0.0.0.0",
+    api_key: None,
+    allowed_origin: Some("*"),
+  )
 }
 
-/// Start an OpenAI-compatible server on the given port.
-/// Returns the mist supervisor; callers can keep the process alive with
-/// `process.sleep_forever()` or similar.
-///
-/// Example:
-/// ```gleam
-/// let agents = [
-///   agent.new(provider.openai("gpt-4o", key)) |> agent.with_instructions("..."),
-/// ]
-/// let assert Ok(_) = server.serve(agents, 3000)
-/// // Now clients can POST to http://localhost:3000/v1/chat/completions
-/// // Multiple parallel requests are handled concurrently via BEAM
-/// ```
+pub fn with_api_key(config: ServerConfig, api_key: String) -> ServerConfig {
+  ServerConfig(..config, api_key: Some(api_key))
+}
+
+pub fn with_allowed_origin(config: ServerConfig, origin: String) -> ServerConfig {
+  ServerConfig(..config, allowed_origin: Some(origin))
+}
+
 pub fn serve(agents: List(Agent(Nil, String)), port: Int) -> Result(Nil, String) {
   serve_with_config(agents, default_config(port))
 }
@@ -51,7 +52,7 @@ pub fn serve_with_config(
   agents: List(Agent(Nil, String)),
   config: ServerConfig,
 ) -> Result(Nil, String) {
-  let handler = make_handler(agents)
+  let handler = make_handler(agents, config)
 
   case
     mist.new(handler)
@@ -72,15 +73,68 @@ pub fn serve_with_config(
 
 fn make_handler(
   agents: List(Agent(Nil, String)),
+  config: ServerConfig,
 ) -> fn(request.Request(mist.Connection)) ->
   response.Response(mist.ResponseData) {
   fn(req: request.Request(mist.Connection)) {
-    case req.method, request.path_segments(req) {
-      _, ["health"] -> health_response()
-      _, ["v1", "models"] -> models_response(agents)
-      _, ["v1", "chat", "completions"] -> handle_chat_completions(req, agents)
-      _, ["chat", "completions"] -> handle_chat_completions(req, agents)
-      _, _ -> not_found_response()
+    case req.method {
+      http.Options -> options_response(config)
+      _ -> {
+        let resp = case req.method, request.path_segments(req) {
+          _, ["health"] -> health_response()
+          _, ["v1", "models"] -> models_response(req, agents, config)
+          _, ["v1", "chat", "completions"] ->
+            handle_chat_completions(req, agents, config)
+          _, ["chat", "completions"] ->
+            handle_chat_completions(req, agents, config)
+          _, _ -> not_found_response()
+        }
+        with_cors(resp, config)
+      }
+    }
+  }
+}
+
+fn options_response(
+  config: ServerConfig,
+) -> response.Response(mist.ResponseData) {
+  let origin = option.unwrap(config.allowed_origin, "*")
+  response.new(204)
+  |> response.set_header("access-control-allow-origin", origin)
+  |> response.set_header("access-control-allow-methods", "GET, POST, OPTIONS")
+  |> response.set_header(
+    "access-control-allow-headers",
+    "Authorization, Content-Type",
+  )
+  |> response.set_body(mist.Bytes(bytes_tree.new()))
+}
+
+fn with_cors(
+  resp: response.Response(mist.ResponseData),
+  config: ServerConfig,
+) -> response.Response(mist.ResponseData) {
+  let origin = option.unwrap(config.allowed_origin, "*")
+  resp
+  |> response.set_header("access-control-allow-origin", origin)
+  |> response.set_header("access-control-allow-methods", "GET, POST, OPTIONS")
+  |> response.set_header(
+    "access-control-allow-headers",
+    "Authorization, Content-Type",
+  )
+}
+
+fn verify_api_key(
+  req: request.Request(mist.Connection),
+  config: ServerConfig,
+) -> Result(Nil, String) {
+  case config.api_key {
+    None -> Ok(Nil)
+    Some(expected) -> {
+      case request.get_header(req, "authorization") {
+        Ok("Bearer " <> key) if key == expected -> Ok(Nil)
+        Ok(key) if key == expected -> Ok(Nil)
+        _ -> Error("Invalid or missing API key")
+      }
     }
   }
 }
@@ -93,31 +147,38 @@ fn health_response() -> response.Response(mist.ResponseData) {
 }
 
 fn models_response(
+  req: request.Request(mist.Connection),
   agents: List(Agent(Nil, String)),
+  config: ServerConfig,
 ) -> response.Response(mist.ResponseData) {
-  let models =
-    agents
-    |> list.index_map(fn(ag, idx) {
-      let name = get_model_name(ag)
-      json.object([
-        #("id", json.string(name)),
-        #("object", json.string("model")),
-        #("created", json.int(0)),
-        #("owned_by", json.string("glroute")),
-        #("index", json.int(idx)),
-      ])
-    })
+  case verify_api_key(req, config) {
+    Error(msg) -> error_response(401, msg)
+    Ok(Nil) -> {
+      let models =
+        agents
+        |> list.index_map(fn(ag, idx) {
+          let name = get_model_name(ag)
+          json.object([
+            #("id", json.string(name)),
+            #("object", json.string("model")),
+            #("created", json.int(0)),
+            #("owned_by", json.string("glroute")),
+            #("index", json.int(idx)),
+          ])
+        })
 
-  let body =
-    json.object([
-      #("object", json.string("list")),
-      #("data", json.preprocessed_array(models)),
-    ])
-    |> json.to_string
+      let body =
+        json.object([
+          #("object", json.string("list")),
+          #("data", json.preprocessed_array(models)),
+        ])
+        |> json.to_string
 
-  response.new(200)
-  |> response.set_header("content-type", "application/json")
-  |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
+      response.new(200)
+      |> response.set_header("content-type", "application/json")
+      |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
+    }
+  }
 }
 
 fn not_found_response() -> response.Response(mist.ResponseData) {
@@ -131,19 +192,24 @@ fn not_found_response() -> response.Response(mist.ResponseData) {
 fn handle_chat_completions(
   req: request.Request(mist.Connection),
   agents: List(Agent(Nil, String)),
+  config: ServerConfig,
 ) -> response.Response(mist.ResponseData) {
-  // Only POST allowed
-  case req.method {
-    http.Post -> handle_chat_post(req, agents)
-    _ ->
-      response.new(405)
-      |> response.set_header("content-type", "application/json")
-      |> response.set_body(
-        mist.Bytes(bytes_tree.from_string(
-          json.object([#("error", json.string("method not allowed"))])
-          |> json.to_string,
-        )),
-      )
+  case verify_api_key(req, config) {
+    Error(msg) -> error_response(401, msg)
+    Ok(Nil) -> {
+      case req.method {
+        http.Post -> handle_chat_post(req, agents)
+        _ ->
+          response.new(405)
+          |> response.set_header("content-type", "application/json")
+          |> response.set_body(
+            mist.Bytes(bytes_tree.from_string(
+              json.object([#("error", json.string("method not allowed"))])
+              |> json.to_string,
+            )),
+          )
+      }
+    }
   }
 }
 
@@ -151,7 +217,6 @@ fn handle_chat_post(
   req: request.Request(mist.Connection),
   agents: List(Agent(Nil, String)),
 ) -> response.Response(mist.ResponseData) {
-  // Read body (limit 1MB)
   case mist.read_body(req, 1_000_000) {
     Error(_) -> error_response(400, "invalid request body")
     Ok(req_with_body) -> {
@@ -171,10 +236,7 @@ fn handle_chat_body(
   case parse_chat_request(body_str) {
     Error(msg) -> error_response(400, msg)
     Ok(chat_req) -> {
-      // Each request is handled in its own BEAM process (mist does this),
-      // so parallel incoming requests run concurrently automatically.
-      // Use priority fallback per request.
-      case parallel.route_priority(agents, chat_req.prompt, Nil) {
+      case priority.route_priority(agents, chat_req.prompt, Nil) {
         Ok(result) -> success_chat_response(result, chat_req.model)
         Error(e) ->
           error_response(500, "all providers failed: " <> errors_to_string(e))
@@ -188,7 +250,6 @@ type ChatRequest {
 }
 
 fn parse_chat_request(body: String) -> Result(ChatRequest, String) {
-  // Parse OpenAI chat completions format: {model, messages: [{role, content}]}
   let message_decoder = {
     use role <- decode.field("role", decode.string)
     use content <- decode.field("content", decode.string)
@@ -204,7 +265,6 @@ fn parse_chat_request(body: String) -> Result(ChatRequest, String) {
   case json.parse(from: body, using: decoder) {
     Error(_) -> Error("invalid JSON or missing messages")
     Ok(#(model, messages)) -> {
-      // Find last user message as prompt
       let prompt = find_last_user_message(messages)
       case prompt {
         Some(p) -> Ok(ChatRequest(model: model, prompt: p))
@@ -215,7 +275,6 @@ fn parse_chat_request(body: String) -> Result(ChatRequest, String) {
 }
 
 fn find_last_user_message(messages: List(#(String, String))) -> Option(String) {
-  // Find last where role == "user"
   messages
   |> list.filter(fn(pair) { pair.0 == "user" })
   |> list.last
@@ -227,7 +286,6 @@ fn success_chat_response(
   result: RunResult(String),
   model: String,
 ) -> response.Response(mist.ResponseData) {
-  // OpenAI-compatible response
   let body =
     json.object([
       #("id", json.string("chatcmpl-glroute")),
@@ -328,6 +386,6 @@ fn string_inspect(v: a) -> String {
   "error"
 }
 
-fn errors_to_string(e: gdantic_ai_errors.GdanticError) -> String {
-  gdantic_ai_errors.to_string(e)
+fn errors_to_string(e: glroute_errors.GlrouteError) -> String {
+  glroute_errors.to_string(e)
 }

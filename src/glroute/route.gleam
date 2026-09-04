@@ -1,4 +1,4 @@
-import gdantic_ai/agent.{type Agent}
+import glroute/agent.{type Agent}
 
 // ---------------------------------------------------------------------------
 // Routing - Priority (sequential fallback)

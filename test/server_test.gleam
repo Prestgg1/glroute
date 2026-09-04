@@ -1,11 +1,12 @@
-import gdantic_ai/agent
-import gdantic_ai/errors
-import gdantic_ai/provider
 import gleam/erlang/process
 import gleam/http/response
+import gleam/list
 import gleeunit/should
 import glon
 import glroute
+import glroute/agent
+import glroute/errors
+import glroute/provider
 
 pub type City {
   City(city: String, country: String)
@@ -29,7 +30,7 @@ fn mock_success(city: String, country: String) {
   }
 }
 
-fn mock_failure(_req) -> Result(response.Response(String), errors.GdanticError) {
+fn mock_failure(_req) -> Result(response.Response(String), errors.GlrouteError) {
   Ok(response.new(500) |> response.set_body("error"))
 }
 
@@ -157,8 +158,6 @@ pub fn server_handles_many_parallel_clients_test() {
 
 // Helpers
 
-import gleam/list
-
 fn list_each_range(count: Int, fun: fn(Int) -> Nil) -> Nil {
   do_range(0, count, fun)
 }
@@ -174,11 +173,11 @@ fn do_range(current: Int, max: Int, fun: fn(Int) -> Nil) -> Nil {
 }
 
 fn collect(
-  subject: process.Subject(Result(a, errors.GdanticError)),
+  subject: process.Subject(Result(a, errors.GlrouteError)),
   remaining: Int,
   timeout: Int,
-  acc: List(Result(a, errors.GdanticError)),
-) -> List(Result(a, errors.GdanticError)) {
+  acc: List(Result(a, errors.GlrouteError)),
+) -> List(Result(a, errors.GlrouteError)) {
   case remaining <= 0 {
     True -> acc
     False -> {

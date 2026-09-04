@@ -1,7 +1,8 @@
-import gdantic_ai/agent
-import gdantic_ai/provider
+import gleam/io
 import glon
 import glroute
+import glroute/agent
+import glroute/provider
 
 pub type City {
   City(city: String, country: String)
@@ -29,9 +30,10 @@ pub fn main() {
 
   case glroute.route_priority(agents, "Which country is Paris in?", Nil) {
     Ok(result) -> {
-      echo "Success: " <> result.output.city <> ", " <> result.output.country
-      echo result.usage
+      io.println(
+        "Success: " <> result.output.city <> ", " <> result.output.country,
+      )
     }
-    Error(e) -> echo e
+    Error(e) -> io.println("Error")
   }
 }

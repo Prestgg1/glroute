@@ -1,10 +1,10 @@
-import gdantic_ai/agent
-import gdantic_ai/errors
-import gdantic_ai/provider
 import gleam/http/response
 import gleeunit/should
 import glon
 import glroute
+import glroute/agent
+import glroute/errors
+import glroute/provider
 
 pub type City {
   City(city: String, country: String)
@@ -28,7 +28,7 @@ fn mock_success(city: String, country: String) {
   }
 }
 
-fn mock_failure(_req) -> Result(response.Response(String), errors.GdanticError) {
+fn mock_failure(_req) -> Result(response.Response(String), errors.GlrouteError) {
   Ok(response.new(500) |> response.set_body("internal error"))
 }
 

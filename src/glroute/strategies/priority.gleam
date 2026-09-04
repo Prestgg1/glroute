@@ -1,23 +1,19 @@
-import gdantic_ai/agent.{type Agent}
-import gdantic_ai/errors.{type GdanticError, ProviderError}
-import gdantic_ai/usage.{type RunResult}
 import gleam/list
+import glroute/agent.{type Agent}
+import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/route
+import glroute/usage.{type RunResult}
 
 // ---------------------------------------------------------------------------
 // Priority routing - sequential fallback (like OmniRoute combos)
 // Tries agents in order, returns first Ok. If all fail, returns last error.
-//
-// Parallelism here is BEAM-level: the server handles each incoming HTTP
-// request in its own process, so many parallel requests are served
-// concurrently. This is NOT fan-out to all models at once.
 // ---------------------------------------------------------------------------
 
 pub fn route_priority(
   agents: List(Agent(deps, output)),
   prompt: String,
   deps: deps,
-) -> Result(RunResult(output), GdanticError) {
+) -> Result(RunResult(output), GlrouteError) {
   case agents {
     [] ->
       Error(ProviderError("glroute: no agents provided for priority routing"))
@@ -31,7 +27,7 @@ fn do_priority(
   deps: deps,
   index: Int,
   tried: List(String),
-) -> Result(RunResult(output), GdanticError) {
+) -> Result(RunResult(output), GlrouteError) {
   case agents {
     [] ->
       Error(ProviderError(
