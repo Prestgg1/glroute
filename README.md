@@ -10,23 +10,19 @@ Lightweight LLM router for Gleam — priority fallback with BEAM concurrent requ
 
 While [OmniRoute](https://github.com/diegosouzapw/OmniRoute) is a sequential fallback proxy that does **not** support parallel requests, `glroute` provides a **custom OpenAI-compatible address** that handles **parallel incoming requests concurrently via BEAM** — each HTTP request runs in its own Erlang process.
 
-```sh
-gleam add glroute --git https://github.com/Prestgg1/glroute.git
-```
-
 ## Installation
 
-You can add `glroute` to your Gleam project directly via GitHub:
-
-```sh
-gleam add glroute --git https://github.com/Prestgg1/glroute.git
-```
-
-Or add it to your `gleam.toml` dependencies:
+Add `glroute` to your `gleam.toml` dependencies:
 
 ```toml
 [dependencies]
-glroute = { git = "https://github.com/Prestgg1/glroute.git", branch = "main" }
+glroute = { git = "https://github.com/Prestgg1/glroute", ref = "main" }
+```
+
+Then download dependencies:
+
+```sh
+gleam deps download
 ```
 
 ## Comparison: glroute vs OmniRoute vs 9Router
