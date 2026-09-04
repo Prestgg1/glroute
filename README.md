@@ -14,9 +14,20 @@ While [OmniRoute](https://github.com/diegosouzapw/OmniRoute) is a sequential fal
 gleam add glroute
 ```
 
+## Comparison: glroute vs OmniRoute vs 9Router
+
+| Feature | `glroute` (Gleam / BEAM) | `OmniRoute` (Node.js) | `9Router` |
+| :--- | :---: | :---: | :---: |
+| **Concurrency / Parallel Requests** | ✅ **BEAM Process per Request** (Native concurrency, zero-blocking) | ❌ Sequential loop (`await executeTarget()`) | ⚠️ Single-node event loop bottleneck |
+| **OpenAI-Compatible Address** | ✅ Yes (`http://localhost:3000/v1`) | ✅ Yes | ✅ Yes |
+| **Zero-Downtime Priority Fallback** | ✅ Yes (Per-request sequential fallback) | ✅ Yes (Combo strategy) | ✅ Yes |
+| **Type Safety & Schema Sync** | ✅ **Type-safe Gleam** + `glon` structured decoder | ❌ Untyped JSON objects | ❌ Untyped JSON proxy |
+| **Footprint & Memory** | ⚡ Extremely lightweight (Erlang VM actor model) | 🐢 Heavy Node.js runtime | 🐢 Heavy container setup |
+| **Security (API Key & CORS)** | ✅ Built-in API Key & CORS headers | ✅ Configurable | ✅ Configurable |
+
 ## Why glroute?
 
-[OmniRoute](https://github.com/diegosouzapw/OmniRoute) (`v3.8.49`) is a unified AI gateway — but its routing is **sequential** and it **does not support parallel requests**: `for (orderedTargets) await executeTarget()` — one request at a time per route, no concurrent handling of many clients.
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) is a unified AI gateway — but its routing execution is **sequential** and it **does not support parallel incoming requests**: `for (orderedTargets) await executeTarget()` — one request at a time per route, no concurrent handling of many clients.
 
 `glroute` fixes this:
 
@@ -31,7 +42,7 @@ gleam add glroute
 - **Custom OpenAI-compatible address** — clients set `base_url = "http://localhost:3000/v1"` and use standard OpenAI SDKs
 - **Typed** — `Agent(deps, output)` + `glon.JsonSchema(output)` — schema + decoder stay in sync
 - **Any provider** — `OpenAI`, `Gemini`, `OpenAICompatible` (Ollama, OpenRouter, Together, Groq, Azure...)
-- **Tested** — priority + server concurrency tests with mocked HTTP
+- **Security** — API Key authorization & CORS header configuration
 
 ## Quick Start
 
@@ -70,7 +81,7 @@ case glroute.route_priority(agents, "Which country is Paris in?", Nil) {
 }
 ```
 
-### 3. Server with custom OpenAI-compatible address (recommended)
+### 3. Server with custom OpenAI-compatible address & Security (recommended)
 
 For production — start a server that clients can point to:
 
@@ -86,14 +97,16 @@ pub fn main() {
     agent.new(provider.openai("gpt-4o-mini", "sk-...")),
   ]
 
-  let assert Ok(_) = glroute.serve(agents, 3000)
+  let config =
+    glroute.default_server_config(3000)
+    |> glroute.with_api_key("secret_token")
+    |> glroute.with_allowed_origin("*")
+
+  let assert Ok(_) = glroute.serve_with_config(agents, config)
   // Now available at:
   //   POST http://localhost:3000/v1/chat/completions
   //   GET  http://localhost:3000/v1/models
   //   GET  http://localhost:3000/health
-  //
-  // Clients set: base_url = "http://localhost:3000/v1"
-  // e.g., OpenAI SDK: new OpenAI({ baseURL: "http://localhost:3000/v1", apiKey: "sk-..." })
 
   process.sleep_forever()
 }
