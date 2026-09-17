@@ -26,6 +26,25 @@ pub type Message {
   Message(role: String, content: json.Json)
 }
 
+pub fn message_role(msg: Message) -> String {
+  msg.role
+}
+
+pub fn message_content(msg: Message) -> json.Json {
+  msg.content
+}
+
+pub type ChatRequest {
+  ChatRequest(
+    model: String,
+    messages: List(Message),
+    tools: List(Tool),
+    temperature: Option(Float),
+    max_tokens: Option(Int),
+    stream: Bool,
+  )
+}
+
 pub type Completion {
   Completion(
     body: String,
@@ -38,35 +57,25 @@ pub type Completion {
 // Parse incoming OpenAI-compatible chat request
 // ---------------------------------------------------------------------------
 
-fn message_decoder() -> decode.Decoder(Message) {
-  use role <- decode.field("role", decode.string)
-  use content <- decode.field("content", decode.json)
-  decode.success(Message(role, content))
-}
-
 pub fn parse_request(body: String) -> Result(ChatRequest, String) {
   let tool_decoder = {
     use name <- decode.field("name", decode.string)
     use description <- decode.optional_field("description", "", decode.string)
-    use parameters <- decode.optional_field("parameters", json.object([]), decode.json)
-    decode.success(Tool(name, description, parameters))
+    decode.success(Tool(name, description, json.object([])))
   }
 
   let request_decoder = {
     use model <- decode.optional_field("model", "default", decode.string)
-    use messages <- decode.field("messages", decode.list(message_decoder()))
+    use messages <- decode.field("messages", decode.list({
+      use role <- decode.field("role", decode.string)
+      use content <- decode.field("content", decode.string)
+      decode.success(Message(role, json.string(content)))
+    }))
     use tools <- decode.optional_field("tools", [], decode.list(tool_decoder))
-    use temperature <- decode.optional_field("temperature", None, decode.float)
-    use max_tokens <- decode.optional_field("max_tokens", None, decode.int)
+    use temperature <- decode.optional_field("temperature", None, decode.optional(decode.float))
+    use max_tokens <- decode.optional_field("max_tokens", None, decode.optional(decode.int))
     use stream <- decode.optional_field("stream", False, decode.bool)
-    decode.success(ChatRequest(
-      model: model,
-      messages: messages,
-      tools: tools,
-      temperature: temperature,
-      max_tokens: max_tokens,
-      stream: stream,
-    ))
+    decode.success(ChatRequest(model, messages, tools, temperature, max_tokens, stream))
   }
 
   case json.parse(from: body, using: request_decoder) {
@@ -87,18 +96,16 @@ pub fn build_body(
   max_tokens: Option(Int),
 ) -> String {
   let sys_messages = case instructions {
-    Some(sys) -> [
-      Message(role: "system", content: json.string(sys))
-    ]
+    Some(sys) -> [Message("system", json.string(sys))]
     None -> []
   }
 
-  let all_messages = sys_messages <> request.messages
+  let all_messages = list.append(sys_messages, request.messages)
 
   let messages_json = list.map(all_messages, fn(msg) {
     json.object([
-      #("role", json.string(msg.role)),
-      #("content", msg.content),
+      #("role", json.string(message_role(msg))),
+      #("content", message_content(msg)),
     ])
   })
 
@@ -140,34 +147,46 @@ pub fn build_body(
 pub fn validate_response(raw: String) -> Result(String, String) {
   let decoder = {
     use choices <- decode.field("choices", decode.list({
-      use content <- decode.optional_field("message", None, decode.object([
-        #("content", decode.optional(decode.string)),
-      ]))
-      use tool_calls <- decode.optional_field("tool_calls", None, decode.list({
-        use id <- decode.field("id", decode.string)
-        use name <- decode.field("name", decode.string)
-        use args <- decode.field("arguments", decode.string)
-        decode.success(#(id, name, args))
+      use message <- decode.optional_field("message", None, decode.optional({
+        use content <- decode.optional_field("content", None, decode.optional(decode.string))
+        decode.success(content)
       }))
-      decode.success(#(content, tool_calls))
+      use tool_calls <- decode.optional_field("tool_calls", [], decode.list({
+        use id <- decode.field("id", decode.string)
+        use function <- decode.field("function", {
+          use name <- decode.field("name", decode.string)
+          use arguments <- decode.field("arguments", decode.string)
+          decode.success(#(name, arguments))
+        })
+        let #(name, arguments) = function
+        decode.success(#(id, name, arguments))
+      }))
+      decode.success(#(message, tool_calls))
     }))
-    use model <- decode.optional_field("model", None, decode.string)
+    use model <- decode.optional_field("model", None, decode.optional(decode.string))
     decode.success(#(choices, model))
   }
 
   case json.parse(from: raw, using: decoder) {
-    Ok(#(choices, model)) -> {
+    Ok(result) -> {
+      let #(choices, model) = result
       case choices {
         [] -> Error("No choices in response")
-        [#(Some(content), _), ..] -> Ok(content)
-        [#(None, Some(tool_calls)), ..] if tool_calls != [] ->
-          Ok(tool_calls |> list.first |> result.unwrap("", fn(tc) { tc.2 }))
+        [#(Some(content), _), ..] -> 
+          case content {
+            Some(c) if c != "" -> Ok(c)
+            _ -> Error("Empty content")
+          }
+        [#(None, tool_calls), ..] if tool_calls != [] ->
+          case tool_calls {
+            [#(_id, _name, args), ..] -> Ok(args)
+            _ -> Error("No tool calls")
+          }
         [#(None, _), ..] ->
           case model {
             Some(m) -> Ok(m)
             None -> Error("Empty response")
           }
-        _ -> Error("Unexpected response format")
       }
     }
     Error(e) -> Error("Failed to parse response: " <> string_inspect(e))

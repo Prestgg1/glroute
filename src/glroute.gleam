@@ -1,7 +1,7 @@
 import glroute/agent.{type Agent}
-import glroute/chat.{type ChatRequest, type Completion, Message}
+import glroute/chat.{type ChatRequest, type Completion, type Message}
 import glroute/errors.{type GlrouteError}
-import glroute/session.{type SessionStore}
+import glroute/session
 import glroute/server
 import glroute/strategies/priority
 import glroute/usage.{type RunResult}

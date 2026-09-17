@@ -1,17 +1,16 @@
 import gleam/dynamic/decode
+import gleam/dict.{type Dict}
 import gleam/json
 import gleam/list
-import gleam/map.{type Map}
-import gleam/string
+import gleam/option.{type Option, None, Some}
 import glroute/chat.{type Message}
-import glroute/errors.{type GlrouteError, ProviderError}
 
 // ---------------------------------------------------------------------------
 // In-memory session store for conversation history
 // Keyed by client-provided session ID (e.g. "session_abc123")
 // ---------------------------------------------------------------------------
 
-type Session {
+pub type Session {
   Session(
     id: String,
     messages: List(Message),
@@ -20,32 +19,39 @@ type Session {
 }
 
 pub type SessionStore {
-  SessionStore(Map(String, Session))
+  SessionStore(Dict(String, Session))
 }
 
 pub fn new() -> SessionStore {
-  SessionStore(map.from_list([]))
+  SessionStore(dict.from_list([]))
 }
 
 pub fn get(store: SessionStore, session_id: String) -> Option(Session) {
-  map.get(store.0, session_id)
+  let SessionStore(dict) = store
+  case dict.get(dict, session_id) {
+    Ok(session) -> Some(session)
+    Error(_) -> None
+  }
 }
 
 pub fn insert(store: SessionStore, session_id: String, messages: List(Message)) -> SessionStore {
-  let now = 1700000000 // simplified timestamp
+  let now = 1700000000
+  let SessionStore(dict) = store
   let session = Session(id: session_id, messages: messages, created_at: now)
-  SessionStore(map.insert(store.0, session_id, session))
+  SessionStore(dict.insert(dict, session_id, session))
 }
 
 pub fn append(store: SessionStore, session_id: String, msg: Message) -> SessionStore {
-  case map.get(store.0, session_id) {
-    Some(s) -> insert(store, session_id, s.messages <> [msg])
-    None -> insert(store, session_id, [msg])
+  let SessionStore(dict) = store
+  case dict.get(dict, session_id) {
+    Ok(s) -> SessionStore(dict.insert(dict, session_id, Session(id: session_id, messages: list.append(s.messages, [msg]), created_at: s.created_at)))
+    Error(_) -> insert(store, session_id, [msg])
   }
 }
 
 pub fn clear(store: SessionStore, session_id: String) -> SessionStore {
-  SessionStore(map.delete(store.0, session_id))
+  let SessionStore(dict) = store
+  SessionStore(dict.delete(dict, session_id))
 }
 
 // ---------------------------------------------------------------------------
@@ -53,16 +59,19 @@ pub fn clear(store: SessionStore, session_id: String) -> SessionStore {
 // ---------------------------------------------------------------------------
 
 pub fn extract_session_id(req_headers: List(#(String, String))) -> Option(String) {
-  case list.find(fn(h) { h.0 == "x-session-id" || h.0 == "X-Session-Id" }, req_headers) {
-    Some(#(_, id)) -> Some(id)
-    None -> None
+  case list.find(in: req_headers, one_that: fn(h) { h.0 == "x-session-id" || h.0 == "X-Session-Id" }) {
+    Ok(#(_, id)) -> Some(id)
+    Error(_) -> None
   }
 }
 
 pub fn parse_session_from_body(body: String) -> Option(String) {
   let decoder = {
-    use sid <- decode.optional_field("session_id", None, decode.string)
-    decode.success(sid)
+    use sid <- decode.optional_field("session_id", "", decode.string)
+    decode.success(case sid {
+      "" -> None
+      i -> Some(i)
+    })
   }
   case json.parse(from: body, using: decoder) {
     Ok(sid) -> sid

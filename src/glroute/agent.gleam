@@ -2,7 +2,7 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import glon
-import glroute/chat.{type ChatRequest, type Completion, Message}
+import glroute/chat.{type ChatRequest, type Completion}
 import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/http
 import glroute/internal/gemini_api
@@ -143,9 +143,9 @@ pub fn complete(
     case chat.validate_response(raw) {
       Error(e) -> Error(ProviderError(e))
       Ok("") ->
-        Ok(Completion(body: raw, model: model_name, served_by: model_name))
+        Ok(chat.Completion(raw, model_name, model_name))
       Ok(upstream_model) ->
-        Ok(Completion(body: raw, model: upstream_model, served_by: model_name))
+        Ok(chat.Completion(raw, upstream_model, model_name))
     }
   })
 }

@@ -1,20 +1,15 @@
 import gleam/bit_array
 import gleam/bytes_tree
-import gleam/dynamic/decode
 import gleam/http
 import gleam/http/request
 import gleam/http/response
 import gleam/json
 import gleam/list
-import gleam/map.{type Map}
 import gleam/option.{type Option, None, Some}
-import gleam/result
 import glroute/agent.{type Agent}
-import glroute/chat.{type ChatRequest, type Completion, Message}
+import glroute/chat.{type Completion}
 import glroute/errors as glroute_errors
-import glroute/session.{type SessionStore}
 import glroute/strategies/priority
-import glroute/usage.{type RunResult}
 import mist
 
 // ---------------------------------------------------------------------------

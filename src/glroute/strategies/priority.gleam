@@ -1,8 +1,7 @@
-import gleam/json
 import gleam/list
-import gleam/result
+import gleam/option.{None}
 import glroute/agent.{type Agent}
-import glroute/chat.{type ChatRequest, type Completion, Message}
+import glroute/chat.{type ChatRequest, ChatRequest, type Completion, type Message}
 import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/route
 import glroute/usage.{type RunResult}
@@ -106,13 +105,6 @@ pub fn route_messages(
     stream: False,
   )
   route_chat(agents, request)
-}
-
-fn tried_to_string(tried: List(String)) -> String {
-  case tried {
-    [] -> "none"
-    _ -> list_join(list.reverse(tried), ", ")
-  }
 }
 
 fn list_join(items: List(String), sep: String) -> String {
