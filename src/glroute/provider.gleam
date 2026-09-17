@@ -64,3 +64,15 @@ pub fn auth_header(provider: Provider) -> #(String, String) {
     OpenAICompatible(api_key: key, ..) -> #("authorization", "Bearer " <> key)
   }
 }
+
+pub fn openai_chat_completions_url(provider: Provider) -> String {
+  base_url(provider) <> "/chat/completions"
+}
+
+pub fn bearer_auth_header(provider: Provider) -> #(String, String) {
+  case provider {
+    OpenAI(key) -> #("authorization", "Bearer " <> key)
+    Gemini(key) -> #("x-goog-api-key", key)
+    OpenAICompatible(api_key: key, ..) -> #("authorization", "Bearer " <> key)
+  }
+}
