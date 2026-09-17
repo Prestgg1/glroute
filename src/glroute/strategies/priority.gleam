@@ -1,5 +1,6 @@
 import gleam/list
 import glroute/agent.{type Agent}
+import glroute/chat.{type ChatRequest, type Completion}
 import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/route
 import glroute/usage.{type RunResult}
@@ -46,6 +47,43 @@ fn do_priority(
         }
       }
     }
+  }
+}
+
+/// Forward a full chat request through agents in priority order.
+/// Returns the first successful completion; if all fail, the error lists
+/// every agent's failure.
+pub fn route_chat(
+  agents: List(Agent(deps, output)),
+  request: ChatRequest,
+) -> Result(Completion, GlrouteError) {
+  case agents {
+    [] ->
+      Error(ProviderError("glroute: no agents provided for priority routing"))
+    _ -> do_route_chat(agents, request, [])
+  }
+}
+
+fn do_route_chat(
+  agents: List(Agent(deps, output)),
+  request: ChatRequest,
+  failures: List(String),
+) -> Result(Completion, GlrouteError) {
+  case agents {
+    [] ->
+      Error(ProviderError(
+        "glroute: all agents failed: "
+        <> list_join(list.reverse(failures), " | "),
+      ))
+    [head, ..tail] ->
+      case agent.complete(head, request) {
+        Ok(completion) -> Ok(completion)
+        Error(e) ->
+          do_route_chat(tail, request, [
+            route.agent_model_name(head) <> ": " <> errors.to_string(e),
+            ..failures
+          ])
+      }
   }
 }
 

@@ -123,6 +123,49 @@ pub fn main() {
 }
 ```
 
+### 4. Agent clients (tools, history, streaming)
+
+`POST /v1/chat/completions` is a full OpenAI-compatible proxy, so agent frameworks such as [OpenClaw](https://openclaw.ai) work through it:
+
+- The whole request is forwarded — system prompt, chat history, content parts, `tools`, `tool_choice`, tool results. Only `model` is replaced per agent.
+- Gemini agents are called through Google's OpenAI-compatible endpoint, so tool calls work the same way for every provider.
+- Upstream calls are non-streaming so priority fallback still works; if the client sends `stream: true`, the completion is returned as SSE chunks (`stream_options.include_usage` supported).
+- A response with no `choices` counts as a failure and falls through to the next agent.
+- The `x-glroute-model` response header names the agent that answered.
+
+The same path is available as a library call:
+
+```gleam
+import glroute/chat
+
+let assert Ok(request) = chat.parse_request(body)
+case glroute.route_chat(agents, request) {
+  Ok(completion) -> completion.body  // raw OpenAI chat.completion JSON
+  Error(e) -> ...                    // lists every agent's failure
+}
+```
+
+OpenClaw provider config (`~/.openclaw/openclaw.json`):
+
+```json5
+{
+  models: {
+    providers: {
+      glroute: {
+        baseUrl: "http://127.0.0.1:3000/v1",
+        apiKey: "secret_token",
+        api: "openai-completions",
+        models: [{ id: "auto", name: "glroute", input: ["text"], contextWindow: 128000, maxTokens: 8192 }],
+      },
+    },
+  },
+}
+```
+
+Then `openclaw models set glroute/auto`.
+
+> Requires Erlang/OTP 27+ (uses the built-in `json` module). On FreeBSD, install `ca_root_nss` so Erlang can find CA certificates for HTTPS.
+
 ## Architecture
 
 ```

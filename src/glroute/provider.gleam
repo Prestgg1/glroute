@@ -36,6 +36,23 @@ pub fn chat_completions_url(provider: Provider) -> String {
   base_url(provider) <> "/chat/completions"
 }
 
+/// Chat completions URL for the OpenAI-compatible proxy path.
+/// Gemini is reached through Google's OpenAI compatibility endpoint.
+pub fn openai_chat_completions_url(provider: Provider) -> String {
+  case provider {
+    Gemini(..) -> base_url(provider) <> "/openai/chat/completions"
+    _ -> chat_completions_url(provider)
+  }
+}
+
+/// Auth header for the OpenAI-compatible proxy path (Bearer for all providers).
+pub fn bearer_auth_header(provider: Provider) -> #(String, String) {
+  case provider {
+    OpenAI(key) | Gemini(key) -> #("authorization", "Bearer " <> key)
+    OpenAICompatible(api_key: key, ..) -> #("authorization", "Bearer " <> key)
+  }
+}
+
 pub fn gemini_generate_url(provider: Provider, model: String) -> String {
   base_url(provider) <> "/models/" <> model <> ":generateContent"
 }

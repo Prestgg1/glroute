@@ -1,22 +1,23 @@
 import gleam/bit_array
 import gleam/bytes_tree
-import gleam/dynamic/decode
 import gleam/http
 import gleam/http/request
 import gleam/http/response
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/result
 import glroute/agent.{type Agent}
+import glroute/chat.{type ChatRequest, type Completion}
 import glroute/errors as glroute_errors
 import glroute/strategies/priority
-import glroute/usage.{type RunResult}
 import mist
 
 // ---------------------------------------------------------------------------
 // Server - OpenAI-compatible address with CORS & API key security
 // ---------------------------------------------------------------------------
+
+/// Agent requests carry full chat history and tool schemas, so allow large bodies.
+const max_body_bytes = 32_000_000
 
 pub type ServerConfig {
   ServerConfig(
@@ -40,11 +41,17 @@ pub fn with_api_key(config: ServerConfig, api_key: String) -> ServerConfig {
   ServerConfig(..config, api_key: Some(api_key))
 }
 
-pub fn with_allowed_origin(config: ServerConfig, origin: String) -> ServerConfig {
+pub fn with_allowed_origin(
+  config: ServerConfig,
+  origin: String,
+) -> ServerConfig {
   ServerConfig(..config, allowed_origin: Some(origin))
 }
 
-pub fn serve(agents: List(Agent(Nil, String)), port: Int) -> Result(Nil, String) {
+pub fn serve(
+  agents: List(Agent(Nil, String)),
+  port: Int,
+) -> Result(Nil, String) {
   serve_with_config(agents, default_config(port))
 }
 
@@ -217,7 +224,7 @@ fn handle_chat_post(
   req: request.Request(mist.Connection),
   agents: List(Agent(Nil, String)),
 ) -> response.Response(mist.ResponseData) {
-  case mist.read_body(req, 1_000_000) {
+  case mist.read_body(req, max_body_bytes) {
     Error(_) -> error_response(400, "invalid request body")
     Ok(req_with_body) -> {
       let body_string = bit_array.to_string(req_with_body.body)
@@ -233,94 +240,31 @@ fn handle_chat_body(
   body_str: String,
   agents: List(Agent(Nil, String)),
 ) -> response.Response(mist.ResponseData) {
-  case parse_chat_request(body_str) {
+  case chat.parse_request(body_str) {
     Error(msg) -> error_response(400, msg)
     Ok(chat_req) -> {
-      case priority.route_priority(agents, chat_req.prompt, Nil) {
-        Ok(result) -> success_chat_response(result, chat_req.model)
+      case priority.route_chat(agents, chat_req) {
+        Ok(completion) -> success_chat_response(completion, chat_req)
         Error(e) ->
-          error_response(500, "all providers failed: " <> errors_to_string(e))
+          error_response(502, "all providers failed: " <> errors_to_string(e))
       }
     }
   }
-}
-
-type ChatRequest {
-  ChatRequest(model: String, prompt: String)
-}
-
-fn parse_chat_request(body: String) -> Result(ChatRequest, String) {
-  let message_decoder = {
-    use role <- decode.field("role", decode.string)
-    use content <- decode.field("content", decode.string)
-    decode.success(#(role, content))
-  }
-
-  let decoder = {
-    use model <- decode.optional_field("model", "default", decode.string)
-    use messages <- decode.field("messages", decode.list(message_decoder))
-    decode.success(#(model, messages))
-  }
-
-  case json.parse(from: body, using: decoder) {
-    Error(_) -> Error("invalid JSON or missing messages")
-    Ok(#(model, messages)) -> {
-      let prompt = find_last_user_message(messages)
-      case prompt {
-        Some(p) -> Ok(ChatRequest(model: model, prompt: p))
-        None -> Error("no user message found")
-      }
-    }
-  }
-}
-
-fn find_last_user_message(messages: List(#(String, String))) -> Option(String) {
-  messages
-  |> list.filter(fn(pair) { pair.0 == "user" })
-  |> list.last
-  |> result.map(fn(pair) { pair.1 })
-  |> option.from_result
 }
 
 fn success_chat_response(
-  result: RunResult(String),
-  model: String,
+  completion: Completion,
+  chat_req: ChatRequest,
 ) -> response.Response(mist.ResponseData) {
-  let body =
-    json.object([
-      #("id", json.string("chatcmpl-glroute")),
-      #("object", json.string("chat.completion")),
-      #("created", json.int(0)),
-      #("model", json.string(model)),
-      #(
-        "choices",
-        json.preprocessed_array([
-          json.object([
-            #("index", json.int(0)),
-            #(
-              "message",
-              json.object([
-                #("role", json.string("assistant")),
-                #("content", json.string(result.output)),
-              ]),
-            ),
-            #("finish_reason", json.string("stop")),
-          ]),
-        ]),
-      ),
-      #(
-        "usage",
-        json.object([
-          #("prompt_tokens", json.int(result.usage.input_tokens)),
-          #("completion_tokens", json.int(result.usage.output_tokens)),
-          #("total_tokens", json.int(result.usage.total_tokens)),
-        ]),
-      ),
-    ])
-    |> json.to_string
+  let #(content_type, body) = case chat.is_stream(chat_req) {
+    True -> #("text/event-stream", chat.to_sse(completion, chat_req))
+    False -> #("application/json", completion.body)
+  }
 
   response.new(200)
-  |> response.set_header("content-type", "application/json")
+  |> response.set_header("content-type", content_type)
+  |> response.set_header("cache-control", "no-cache")
+  |> response.set_header("x-glroute-model", completion.served_by)
   |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
 }
 

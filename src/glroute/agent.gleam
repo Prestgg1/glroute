@@ -2,6 +2,7 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import glon
+import glroute/chat.{type ChatRequest, type Completion, Completion}
 import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/http
 import glroute/internal/gemini_api
@@ -223,13 +224,51 @@ fn run_gemini(
   })
 }
 
+/// Forward a full OpenAI-compatible chat request (history, tools, content
+/// parts) to this agent's provider and return the raw completion.
+/// The agent's glon decoder is not applied on this path.
+pub fn complete(
+  agent: Agent(deps, output),
+  request: ChatRequest,
+) -> Result(Completion, GlrouteError) {
+  let model = agent.config.model
+  let body =
+    chat.build_body(
+      request,
+      model.model_name,
+      agent.config.instructions,
+      agent.config.temperature,
+      agent.config.max_tokens,
+    )
+  let url = provider.openai_chat_completions_url(model.provider)
+  let headers = [provider.bearer_auth_header(model.provider)]
+
+  do_request_with_retries(agent, url, headers, body, fn(raw) {
+    case chat.validate_response(raw) {
+      Error(e) -> Error(ProviderError(e))
+      Ok("") ->
+        Ok(Completion(
+          body: raw,
+          model: model.model_name,
+          served_by: model.model_name,
+        ))
+      Ok(upstream_model) ->
+        Ok(Completion(
+          body: raw,
+          model: upstream_model,
+          served_by: model.model_name,
+        ))
+    }
+  })
+}
+
 fn do_request_with_retries(
   agent: Agent(deps, output),
   url: String,
   headers: List(#(String, String)),
   body: String,
-  handler: fn(String) -> Result(RunResult(output), GlrouteError),
-) -> Result(RunResult(output), GlrouteError) {
+  handler: fn(String) -> Result(a, GlrouteError),
+) -> Result(a, GlrouteError) {
   do_retry(agent, url, headers, body, handler, 0)
 }
 
@@ -238,9 +277,9 @@ fn do_retry(
   url: String,
   headers: List(#(String, String)),
   body: String,
-  handler: fn(String) -> Result(RunResult(output), GlrouteError),
+  handler: fn(String) -> Result(a, GlrouteError),
   attempt: Int,
-) -> Result(RunResult(output), GlrouteError) {
+) -> Result(a, GlrouteError) {
   let client = case agent.config.http_client {
     Some(c) -> c
     None -> http.default_client

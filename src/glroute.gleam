@@ -1,4 +1,5 @@
 import glroute/agent.{type Agent}
+import glroute/chat.{type ChatRequest, type Completion}
 import glroute/errors.{type GlrouteError}
 import glroute/server
 import glroute/strategies/priority
@@ -27,12 +28,25 @@ pub fn route_priority(
   priority.route_priority(agents, prompt, deps)
 }
 
+/// Forward a full OpenAI-compatible chat request (history, system prompt,
+/// tools, content parts) through agents in priority order.
+/// Parse the request with `glroute/chat.parse_request`.
+pub fn route_chat(
+  agents: List(Agent(deps, output)),
+  request: ChatRequest,
+) -> Result(Completion, GlrouteError) {
+  priority.route_chat(agents, request)
+}
+
 // ---------------------------------------------------------------------------
 // Server - OpenAI-compatible address with CORS & Security
 // ---------------------------------------------------------------------------
 
 /// Start server on port with given agents.
-pub fn serve(agents: List(Agent(Nil, String)), port: Int) -> Result(Nil, String) {
+pub fn serve(
+  agents: List(Agent(Nil, String)),
+  port: Int,
+) -> Result(Nil, String) {
   server.serve(agents, port)
 }
 
@@ -51,7 +65,10 @@ pub fn with_api_key(config: ServerConfig, api_key: String) -> ServerConfig {
   server.with_api_key(config, api_key)
 }
 
-pub fn with_allowed_origin(config: ServerConfig, origin: String) -> ServerConfig {
+pub fn with_allowed_origin(
+  config: ServerConfig,
+  origin: String,
+) -> ServerConfig {
   server.with_allowed_origin(config, origin)
 }
 

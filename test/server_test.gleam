@@ -30,7 +30,9 @@ fn mock_success(city: String, country: String) {
   }
 }
 
-fn mock_failure(_req) -> Result(response.Response(String), errors.GlrouteError) {
+fn mock_failure(
+  _req,
+) -> Result(response.Response(String), errors.GlrouteError) {
   Ok(response.new(500) |> response.set_body("error"))
 }
 
