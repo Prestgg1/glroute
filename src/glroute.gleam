@@ -1,5 +1,7 @@
 import glroute/agent.{type Agent}
+import glroute/chat.{type ChatRequest, type Completion, Message}
 import glroute/errors.{type GlrouteError}
+import glroute/session.{type SessionStore}
 import glroute/server
 import glroute/strategies/priority
 import glroute/usage.{type RunResult}
@@ -27,6 +29,22 @@ pub fn route_priority(
   priority.route_priority(agents, prompt, deps)
 }
 
+/// Route a full chat request with tool support.
+pub fn route_chat(
+  agents: List(Agent(deps, output)),
+  request: ChatRequest,
+) -> Result(Completion, GlrouteError) {
+  priority.route_chat(agents, request)
+}
+
+/// Route a list of messages (for session replay).
+pub fn route_messages(
+  agents: List(Agent(deps, output)),
+  messages: List(Message),
+) -> Result(Completion, GlrouteError) {
+  priority.route_messages(agents, messages)
+}
+
 // ---------------------------------------------------------------------------
 // Server - OpenAI-compatible address with CORS & Security
 // ---------------------------------------------------------------------------
@@ -43,6 +61,14 @@ pub fn serve_with_config(
   server.serve_with_config(agents, config)
 }
 
+/// Start server with session history support.
+pub fn serve_with_sessions(
+  agents: List(Agent(Nil, String)),
+  port: Int,
+) -> Result(Nil, String) {
+  server.serve_with_sessions(agents, port)
+}
+
 pub fn default_server_config(port: Int) -> ServerConfig {
   server.default_config(port)
 }
@@ -57,3 +83,10 @@ pub fn with_allowed_origin(config: ServerConfig, origin: String) -> ServerConfig
 
 pub type ServerConfig =
   server.ServerConfig
+
+pub type SessionStore =
+  session.SessionStore
+
+pub fn new_session_store() -> SessionStore {
+  session.new()
+}

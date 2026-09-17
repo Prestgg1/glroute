@@ -1,5 +1,8 @@
+import gleam/json
 import gleam/list
+import gleam/result
 import glroute/agent.{type Agent}
+import glroute/chat.{type ChatRequest, type Completion, Message}
 import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/route
 import glroute/usage.{type RunResult}
@@ -47,6 +50,62 @@ fn do_priority(
       }
     }
   }
+}
+
+fn tried_to_string(tried: List(String)) -> String {
+  case tried {
+    [] -> "none"
+    _ -> list_join(list.reverse(tried), ", ")
+  }
+}
+
+pub fn route_chat(
+  agents: List(Agent(deps, output)),
+  request: ChatRequest,
+) -> Result(Completion, GlrouteError) {
+  case agents {
+    [] -> Error(ProviderError("glroute: no agents provided"))
+    _ -> do_route_chat(agents, request, [])
+  }
+}
+
+fn do_route_chat(
+  agents: List(Agent(deps, output)),
+  request: ChatRequest,
+  tried: List(String),
+) -> Result(Completion, GlrouteError) {
+  case agents {
+    [] -> Error(ProviderError(
+      "glroute: all agents failed (tried: " <> tried_to_string(tried) <> ")",
+    ))
+    [head, ..tail] -> {
+      let model_name = route.agent_model_name(head)
+      case agent.complete(head, request) {
+        Ok(completion) -> Ok(completion)
+        Error(e) -> {
+          case tail {
+            [] -> Error(e)
+            _ -> do_route_chat(tail, request, [model_name, ..tried])
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn route_messages(
+  agents: List(Agent(deps, output)),
+  messages: List(Message),
+) -> Result(Completion, GlrouteError) {
+  let request = ChatRequest(
+    model: "default",
+    messages: messages,
+    tools: [],
+    temperature: None,
+    max_tokens: None,
+    stream: False,
+  )
+  route_chat(agents, request)
 }
 
 fn tried_to_string(tried: List(String)) -> String {

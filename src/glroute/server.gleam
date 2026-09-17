@@ -6,10 +6,13 @@ import gleam/http/request
 import gleam/http/response
 import gleam/json
 import gleam/list
+import gleam/map.{type Map}
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import glroute/agent.{type Agent}
+import glroute/chat.{type ChatRequest, type Completion, Message}
 import glroute/errors as glroute_errors
+import glroute/session.{type SessionStore}
 import glroute/strategies/priority
 import glroute/usage.{type RunResult}
 import mist
@@ -48,7 +51,21 @@ pub fn serve(agents: List(Agent(Nil, String)), port: Int) -> Result(Nil, String)
   serve_with_config(agents, default_config(port))
 }
 
+pub fn serve_with_sessions(
+  agents: List(Agent(Nil, String)),
+  port: Int,
+) -> Result(Nil, String) {
+  serve_with_sessions_config(agents, default_config(port))
+}
+
 pub fn serve_with_config(
+  agents: List(Agent(Nil, String)),
+  config: ServerConfig,
+) -> Result(Nil, String) {
+  serve_with_sessions_config(agents, config)
+}
+
+pub fn serve_with_sessions_config(
   agents: List(Agent(Nil, String)),
   config: ServerConfig,
 ) -> Result(Nil, String) {
@@ -213,11 +230,14 @@ fn handle_chat_completions(
   }
 }
 
+/// Max body size for chat requests (32MB for tool-heavy conversations)
+const max_body_bytes = 32_000_000
+
 fn handle_chat_post(
   req: request.Request(mist.Connection),
   agents: List(Agent(Nil, String)),
 ) -> response.Response(mist.ResponseData) {
-  case mist.read_body(req, 1_000_000) {
+  case mist.read_body(req, max_body_bytes) {
     Error(_) -> error_response(400, "invalid request body")
     Ok(req_with_body) -> {
       let body_string = bit_array.to_string(req_with_body.body)
@@ -233,11 +253,11 @@ fn handle_chat_body(
   body_str: String,
   agents: List(Agent(Nil, String)),
 ) -> response.Response(mist.ResponseData) {
-  case parse_chat_request(body_str) {
+  case chat.parse_request(body_str) {
     Error(msg) -> error_response(400, msg)
     Ok(chat_req) -> {
-      case priority.route_priority(agents, chat_req.prompt, Nil) {
-        Ok(result) -> success_chat_response(result, chat_req.model)
+      case priority.route_chat(agents, chat_req) {
+        Ok(completion) -> success_chat_response(completion)
         Error(e) ->
           error_response(500, "all providers failed: " <> errors_to_string(e))
       }
@@ -245,80 +265,8 @@ fn handle_chat_body(
   }
 }
 
-type ChatRequest {
-  ChatRequest(model: String, prompt: String)
-}
-
-fn parse_chat_request(body: String) -> Result(ChatRequest, String) {
-  let message_decoder = {
-    use role <- decode.field("role", decode.string)
-    use content <- decode.field("content", decode.string)
-    decode.success(#(role, content))
-  }
-
-  let decoder = {
-    use model <- decode.optional_field("model", "default", decode.string)
-    use messages <- decode.field("messages", decode.list(message_decoder))
-    decode.success(#(model, messages))
-  }
-
-  case json.parse(from: body, using: decoder) {
-    Error(_) -> Error("invalid JSON or missing messages")
-    Ok(#(model, messages)) -> {
-      let prompt = find_last_user_message(messages)
-      case prompt {
-        Some(p) -> Ok(ChatRequest(model: model, prompt: p))
-        None -> Error("no user message found")
-      }
-    }
-  }
-}
-
-fn find_last_user_message(messages: List(#(String, String))) -> Option(String) {
-  messages
-  |> list.filter(fn(pair) { pair.0 == "user" })
-  |> list.last
-  |> result.map(fn(pair) { pair.1 })
-  |> option.from_result
-}
-
-fn success_chat_response(
-  result: RunResult(String),
-  model: String,
-) -> response.Response(mist.ResponseData) {
-  let body =
-    json.object([
-      #("id", json.string("chatcmpl-glroute")),
-      #("object", json.string("chat.completion")),
-      #("created", json.int(0)),
-      #("model", json.string(model)),
-      #(
-        "choices",
-        json.preprocessed_array([
-          json.object([
-            #("index", json.int(0)),
-            #(
-              "message",
-              json.object([
-                #("role", json.string("assistant")),
-                #("content", json.string(result.output)),
-              ]),
-            ),
-            #("finish_reason", json.string("stop")),
-          ]),
-        ]),
-      ),
-      #(
-        "usage",
-        json.object([
-          #("prompt_tokens", json.int(result.usage.input_tokens)),
-          #("completion_tokens", json.int(result.usage.output_tokens)),
-          #("total_tokens", json.int(result.usage.total_tokens)),
-        ]),
-      ),
-    ])
-    |> json.to_string
-
+fn success_chat_response(completion: Completion) -> response.Response(mist.ResponseData) {
+  let body = completion.body
   response.new(200)
   |> response.set_header("content-type", "application/json")
   |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))

@@ -2,6 +2,7 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import glon
+import glroute/chat.{type ChatRequest, type Completion, Message}
 import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/http
 import glroute/internal/gemini_api
@@ -118,6 +119,35 @@ pub fn run(
     provider.Gemini(..) -> run_gemini(agent, messages)
     _ -> run_openai(agent, messages)
   }
+}
+
+/// Full OpenAI-compatible chat completion with tool support.
+/// Returns the raw completion body for proxying back to client.
+pub fn complete(
+  agent: Agent(deps, output),
+  request: ChatRequest,
+) -> Result(Completion, GlrouteError) {
+  let model_name = agent.config.model.model_name
+  let model = agent.config.model
+  let body = chat.build_body(
+    request,
+    model_name,
+    agent.config.instructions,
+    agent.config.temperature,
+    agent.config.max_tokens,
+  )
+  let url = provider.openai_chat_completions_url(model.provider)
+  let headers = [provider.bearer_auth_header(model.provider)]
+
+  do_request_with_retries_complete(agent, url, headers, body, fn(raw) {
+    case chat.validate_response(raw) {
+      Error(e) -> Error(ProviderError(e))
+      Ok("") ->
+        Ok(Completion(body: raw, model: model_name, served_by: model_name))
+      Ok(upstream_model) ->
+        Ok(Completion(body: raw, model: upstream_model, served_by: model_name))
+    }
+  })
 }
 
 fn run_openai(
@@ -275,4 +305,54 @@ fn do_retry(
 
 fn string_inspect(_v: a) -> String {
   "inspect_error"
+}
+
+fn do_request_with_retries_complete(
+  agent: Agent(deps, output),
+  url: String,
+  headers: List(#(String, String)),
+  body: String,
+  handler: fn(String) -> Result(Completion, GlrouteError),
+) -> Result(Completion, GlrouteError) {
+  do_retry_complete(agent, url, headers, body, handler, 0)
+}
+
+fn do_retry_complete(
+  agent: Agent(deps, output),
+  url: String,
+  headers: List(#(String, String)),
+  body: String,
+  handler: fn(String) -> Result(Completion, GlrouteError),
+  attempt: Int,
+) -> Result(Completion, GlrouteError) {
+  let client = case agent.config.http_client {
+    Some(c) -> c
+    None -> http.default_client
+  }
+
+  let result = {
+    use req <- result.try(http.post_json(url, headers, body))
+    use resp <- result.try(client(req))
+    use resp <- result.try(http.expect_success(resp))
+    Ok(resp.body)
+  }
+
+  case result {
+    Error(e) -> {
+      case attempt < agent.config.retries {
+        True -> do_retry_complete(agent, url, headers, body, handler, attempt + 1)
+        False -> Error(e)
+      }
+    }
+    Ok(raw) -> {
+      case handler(raw) {
+        Ok(v) -> Ok(v)
+        Error(e) ->
+          case attempt < agent.config.retries {
+            True -> do_retry_complete(agent, url, headers, body, handler, attempt + 1)
+            False -> Error(e)
+          }
+      }
+    }
+  }
 }
