@@ -5,7 +5,6 @@ import gleam/map.{type Map}
 import gleam/string
 import glroute/chat.{type Message}
 import glroute/errors.{type GlrouteError, ProviderError}
-import glroute/server
 
 // ---------------------------------------------------------------------------
 // In-memory session store for conversation history
