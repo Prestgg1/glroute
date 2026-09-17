@@ -2,7 +2,7 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import glon
-import glroute/chat.{type ChatRequest, type Completion}
+import glroute/chat.{type ChatRequest, type Completion, Completion}
 import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/http
 import glroute/internal/gemini_api
