@@ -129,23 +129,22 @@ pub fn complete(
 ) -> Result(Completion, GlrouteError) {
   let model_name = agent.config.model.model_name
   let model = agent.config.model
-  let body = chat.build_body(
-    request,
-    model_name,
-    agent.config.instructions,
-    agent.config.temperature,
-    agent.config.max_tokens,
-  )
+  let body =
+    chat.build_body(
+      request,
+      model_name,
+      agent.config.instructions,
+      agent.config.temperature,
+      agent.config.max_tokens,
+    )
   let url = provider.openai_chat_completions_url(model.provider)
   let headers = [provider.bearer_auth_header(model.provider)]
 
   do_request_with_retries_complete(agent, url, headers, body, fn(raw) {
     case chat.validate_response(raw) {
       Error(e) -> Error(ProviderError(e))
-      Ok("") ->
-        Ok(chat.Completion(raw, model_name, model_name))
-      Ok(upstream_model) ->
-        Ok(chat.Completion(raw, upstream_model, model_name))
+      Ok("") -> Ok(chat.Completion(raw, model_name, model_name))
+      Ok(upstream_model) -> Ok(chat.Completion(raw, upstream_model, model_name))
     }
   })
 }
@@ -340,7 +339,8 @@ fn do_retry_complete(
   case result {
     Error(e) -> {
       case attempt < agent.config.retries {
-        True -> do_retry_complete(agent, url, headers, body, handler, attempt + 1)
+        True ->
+          do_retry_complete(agent, url, headers, body, handler, attempt + 1)
         False -> Error(e)
       }
     }
@@ -349,7 +349,8 @@ fn do_retry_complete(
         Ok(v) -> Ok(v)
         Error(e) ->
           case attempt < agent.config.retries {
-            True -> do_retry_complete(agent, url, headers, body, handler, attempt + 1)
+            True ->
+              do_retry_complete(agent, url, headers, body, handler, attempt + 1)
             False -> Error(e)
           }
       }

@@ -1,5 +1,5 @@
-import gleam/dynamic/decode
 import gleam/dict.{type Dict}
+import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -11,11 +11,7 @@ import glroute/chat.{type Message}
 // ---------------------------------------------------------------------------
 
 pub type Session {
-  Session(
-    id: String,
-    messages: List(Message),
-    created_at: Int,
-  )
+  Session(id: String, messages: List(Message), created_at: Int)
 }
 
 pub type SessionStore {
@@ -34,17 +30,34 @@ pub fn get(store: SessionStore, session_id: String) -> Option(Session) {
   }
 }
 
-pub fn insert(store: SessionStore, session_id: String, messages: List(Message)) -> SessionStore {
-  let now = 1700000000
+pub fn insert(
+  store: SessionStore,
+  session_id: String,
+  messages: List(Message),
+) -> SessionStore {
+  let now = 1_700_000_000
   let SessionStore(dict) = store
   let session = Session(id: session_id, messages: messages, created_at: now)
   SessionStore(dict.insert(dict, session_id, session))
 }
 
-pub fn append(store: SessionStore, session_id: String, msg: Message) -> SessionStore {
+pub fn append(
+  store: SessionStore,
+  session_id: String,
+  msg: Message,
+) -> SessionStore {
   let SessionStore(dict) = store
   case dict.get(dict, session_id) {
-    Ok(s) -> SessionStore(dict.insert(dict, session_id, Session(id: session_id, messages: list.append(s.messages, [msg]), created_at: s.created_at)))
+    Ok(s) ->
+      SessionStore(dict.insert(
+        dict,
+        session_id,
+        Session(
+          id: session_id,
+          messages: list.append(s.messages, [msg]),
+          created_at: s.created_at,
+        ),
+      ))
     Error(_) -> insert(store, session_id, [msg])
   }
 }
@@ -58,8 +71,14 @@ pub fn clear(store: SessionStore, session_id: String) -> SessionStore {
 // Session ID from request header or body
 // ---------------------------------------------------------------------------
 
-pub fn extract_session_id(req_headers: List(#(String, String))) -> Option(String) {
-  case list.find(in: req_headers, one_that: fn(h) { h.0 == "x-session-id" || h.0 == "X-Session-Id" }) {
+pub fn extract_session_id(
+  req_headers: List(#(String, String)),
+) -> Option(String) {
+  case
+    list.find(in: req_headers, one_that: fn(h) {
+      h.0 == "x-session-id" || h.0 == "X-Session-Id"
+    })
+  {
     Ok(#(_, id)) -> Some(id)
     Error(_) -> None
   }

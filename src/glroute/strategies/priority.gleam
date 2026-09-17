@@ -1,7 +1,9 @@
 import gleam/list
 import gleam/option.{None}
 import glroute/agent.{type Agent}
-import glroute/chat.{type ChatRequest, ChatRequest, type Completion, type Message}
+import glroute/chat.{
+  type ChatRequest, type Completion, type Message, ChatRequest,
+}
 import glroute/errors.{type GlrouteError, ProviderError}
 import glroute/route
 import glroute/usage.{type RunResult}
@@ -74,9 +76,10 @@ fn do_route_chat(
   tried: List(String),
 ) -> Result(Completion, GlrouteError) {
   case agents {
-    [] -> Error(ProviderError(
-      "glroute: all agents failed (tried: " <> tried_to_string(tried) <> ")",
-    ))
+    [] ->
+      Error(ProviderError(
+        "glroute: all agents failed (tried: " <> tried_to_string(tried) <> ")",
+      ))
     [head, ..tail] -> {
       let model_name = route.agent_model_name(head)
       case agent.complete(head, request) {
@@ -96,14 +99,15 @@ pub fn route_messages(
   agents: List(Agent(deps, output)),
   messages: List(Message),
 ) -> Result(Completion, GlrouteError) {
-  let request = ChatRequest(
-    model: "default",
-    messages: messages,
-    tools: [],
-    temperature: None,
-    max_tokens: None,
-    stream: False,
-  )
+  let request =
+    ChatRequest(
+      model: "default",
+      messages: messages,
+      tools: [],
+      temperature: None,
+      max_tokens: None,
+      stream: False,
+    )
   route_chat(agents, request)
 }
 

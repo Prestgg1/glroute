@@ -38,11 +38,17 @@ pub fn with_api_key(config: ServerConfig, api_key: String) -> ServerConfig {
   ServerConfig(..config, api_key: Some(api_key))
 }
 
-pub fn with_allowed_origin(config: ServerConfig, origin: String) -> ServerConfig {
+pub fn with_allowed_origin(
+  config: ServerConfig,
+  origin: String,
+) -> ServerConfig {
   ServerConfig(..config, allowed_origin: Some(origin))
 }
 
-pub fn serve(agents: List(Agent(Nil, String)), port: Int) -> Result(Nil, String) {
+pub fn serve(
+  agents: List(Agent(Nil, String)),
+  port: Int,
+) -> Result(Nil, String) {
   serve_with_config(agents, default_config(port))
 }
 
@@ -260,7 +266,9 @@ fn handle_chat_body(
   }
 }
 
-fn success_chat_response(completion: Completion) -> response.Response(mist.ResponseData) {
+fn success_chat_response(
+  completion: Completion,
+) -> response.Response(mist.ResponseData) {
   let body = completion.body
   response.new(200)
   |> response.set_header("content-type", "application/json")

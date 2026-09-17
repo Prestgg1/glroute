@@ -1,8 +1,8 @@
 import glroute/agent.{type Agent}
 import glroute/chat.{type ChatRequest, type Completion, type Message}
 import glroute/errors.{type GlrouteError}
-import glroute/session
 import glroute/server
+import glroute/session
 import glroute/strategies/priority
 import glroute/usage.{type RunResult}
 
@@ -50,7 +50,10 @@ pub fn route_messages(
 // ---------------------------------------------------------------------------
 
 /// Start server on port with given agents.
-pub fn serve(agents: List(Agent(Nil, String)), port: Int) -> Result(Nil, String) {
+pub fn serve(
+  agents: List(Agent(Nil, String)),
+  port: Int,
+) -> Result(Nil, String) {
   server.serve(agents, port)
 }
 
@@ -77,7 +80,10 @@ pub fn with_api_key(config: ServerConfig, api_key: String) -> ServerConfig {
   server.with_api_key(config, api_key)
 }
 
-pub fn with_allowed_origin(config: ServerConfig, origin: String) -> ServerConfig {
+pub fn with_allowed_origin(
+  config: ServerConfig,
+  origin: String,
+) -> ServerConfig {
   server.with_allowed_origin(config, origin)
 }
 
