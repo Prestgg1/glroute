@@ -5,7 +5,16 @@
 %% content parts, provider extensions) are forwarded untouched.
 %% Requires OTP 27+ for the `json` module.
 
--export([parse_request/1, build_body/5, validate_response/1, to_sse/2]).
+-export([parse_request/1, build_body/5, validate_response/1, to_sse/2, monotonic_time_ms/0, safe_run/1]).
+
+monotonic_time_ms() ->
+    erlang:monotonic_time(millisecond).
+
+safe_run(Fun) ->
+    try Fun()
+    catch
+        Class:Reason -> {error, {Class, Reason}}
+    end.
 
 parse_request(Body) ->
     try json:decode(Body) of

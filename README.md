@@ -42,12 +42,16 @@ gleam deps download
 
 `glroute` fixes this:
 
-- **`Priority` (sequential fallback per request)** — like OmniRoute combos: try agents in order, return the first success. Simple, reliable.
+- **`Priority` (sequential fallback per request)** — try agents in order, return the first success. Simple, reliable.
+- **`Fusion` (concurrent racing per request)** — race all agents simultaneously in parallel. The fastest valid response wins and is returned immediately; all other pending requests are terminated. Matches Arivio's AI Fusion architecture.
+- **`Combos` (multiple named model lists)** — configure multiple model lists with assigned strategies (`Fusion` or `Priority`) and expose them as distinct models over the OpenAI-compatible API.
 - **Parallel incoming requests** — the server exposes a custom OpenAI-compatible address (e.g., `http://localhost:3000/v1`) and handles **multiple parallel requests concurrently** via BEAM/Erlang — each request in its own lightweight process, no blocking.
 - **Production-ready, small** — `mist` HTTP server, typed output via `glon`, mockable.
 
 ## Features
 
+- **Combos** — define multiple named lists with `Priority` or `Fusion` strategies
+- **Fusion strategy** — fastest-wins concurrent racing across upstream LLMs
 - **Priority routing** — sequential fallback per request (`List(Agent)`)
 - **Parallel request handling** — concurrent via `mist` + BEAM scheduler (each `POST /v1/chat/completions` in its own process)
 - **Custom OpenAI-compatible address** — clients set `base_url = "http://localhost:3000/v1"` and use standard OpenAI SDKs
@@ -81,10 +85,9 @@ let agents = [
 ]
 ```
 
-### 2. Direct routing (without server)
+### 2. Direct routing (Priority vs Fusion)
 
-For library use — sequential fallback per call:
-
+#### Priority (sequential fallback)
 ```gleam
 case glroute.route_priority(agents, "Which country is Paris in?", Nil) {
   Ok(result) -> echo result.output  // City("Paris", "France")
@@ -92,9 +95,18 @@ case glroute.route_priority(agents, "Which country is Paris in?", Nil) {
 }
 ```
 
-### 3. Server with custom OpenAI-compatible address & Security (recommended)
+#### Fusion (concurrent racing — fastest wins)
+```gleam
+// All agents called in parallel; fastest success wins and cancels other requests
+case glroute.route_fusion(agents, "Which country is Paris in?", Nil) {
+  Ok(result) -> echo result.output
+  Error(e) -> echo e
+}
+```
 
-For production — start a server that clients can point to:
+### 3. Server with Combos (multiple lists with Priority or Fusion)
+
+For production — configure multiple named lists (combos) with different strategies:
 
 ```gleam
 import gleam/erlang/process
@@ -103,20 +115,32 @@ import glroute/agent
 import glroute/provider
 
 pub fn main() {
-  let agents = [
-    agent.new(provider.openai("gpt-4o", "sk-...")),
-    agent.new(provider.openai("gpt-4o-mini", "sk-...")),
-  ]
+  // Define combos:
+  // "fast" uses Fusion strategy (parallel race across fast models)
+  let fast_combo =
+    glroute.fusion_combo("fast", [
+      agent.new(provider.gemini("gemini-2.5-flash", "AIza...")),
+      agent.new(provider.openai_compatible("agnes-2.5-flash", "https://apihub.agnes-ai.com/v1", "sk-...")),
+    ])
+
+  // "reliable" uses Priority strategy (sequential fallback)
+  let reliable_combo =
+    glroute.priority_combo("reliable", [
+      agent.new(provider.openai("gpt-4o", "sk-...")),
+      agent.new(provider.openai("gpt-4o-mini", "sk-...")),
+    ])
+
+  let combos = [fast_combo, reliable_combo]
 
   let config =
     glroute.default_server_config(3000)
     |> glroute.with_api_key("secret_token")
     |> glroute.with_allowed_origin("*")
 
-  let assert Ok(_) = glroute.serve_with_config(agents, config)
+  let assert Ok(_) = glroute.serve_combos_with_config(combos, config)
   // Now available at:
-  //   POST http://localhost:3000/v1/chat/completions
-  //   GET  http://localhost:3000/v1/models
+  //   POST http://localhost:3000/v1/chat/completions (model: "fast" or model: "reliable")
+  //   GET  http://localhost:3000/v1/models (lists all combos and underlying models)
   //   GET  http://localhost:3000/health
 
   process.sleep_forever()

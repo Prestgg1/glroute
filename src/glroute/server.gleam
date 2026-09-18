@@ -8,8 +8,8 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import glroute/agent.{type Agent}
 import glroute/chat.{type ChatRequest, type Completion}
+import glroute/combo.{type Combo}
 import glroute/errors as glroute_errors
-import glroute/strategies/priority
 import mist
 
 // ---------------------------------------------------------------------------
@@ -52,14 +52,28 @@ pub fn serve(
   agents: List(Agent(Nil, String)),
   port: Int,
 ) -> Result(Nil, String) {
-  serve_with_config(agents, default_config(port))
+  serve_combos([combo.priority("default", agents)], port)
 }
 
 pub fn serve_with_config(
   agents: List(Agent(Nil, String)),
   config: ServerConfig,
 ) -> Result(Nil, String) {
-  let handler = make_handler(agents, config)
+  serve_combos_with_config([combo.priority("default", agents)], config)
+}
+
+pub fn serve_combos(
+  combos: List(Combo(Nil, String)),
+  port: Int,
+) -> Result(Nil, String) {
+  serve_combos_with_config(combos, default_config(port))
+}
+
+pub fn serve_combos_with_config(
+  combos: List(Combo(Nil, String)),
+  config: ServerConfig,
+) -> Result(Nil, String) {
+  let handler = make_handler(combos, config)
 
   case
     mist.new(handler)
@@ -79,7 +93,7 @@ pub fn serve_with_config(
 }
 
 fn make_handler(
-  agents: List(Agent(Nil, String)),
+  combos: List(Combo(Nil, String)),
   config: ServerConfig,
 ) -> fn(request.Request(mist.Connection)) ->
   response.Response(mist.ResponseData) {
@@ -89,11 +103,11 @@ fn make_handler(
       _ -> {
         let resp = case req.method, request.path_segments(req) {
           _, ["health"] -> health_response()
-          _, ["v1", "models"] -> models_response(req, agents, config)
+          _, ["v1", "models"] -> models_response(req, combos, config)
           _, ["v1", "chat", "completions"] ->
-            handle_chat_completions(req, agents, config)
+            handle_chat_completions(req, combos, config)
           _, ["chat", "completions"] ->
-            handle_chat_completions(req, agents, config)
+            handle_chat_completions(req, combos, config)
           _, _ -> not_found_response()
         }
         with_cors(resp, config)
@@ -155,29 +169,52 @@ fn health_response() -> response.Response(mist.ResponseData) {
 
 fn models_response(
   req: request.Request(mist.Connection),
-  agents: List(Agent(Nil, String)),
+  combos: List(Combo(Nil, String)),
   config: ServerConfig,
 ) -> response.Response(mist.ResponseData) {
   case verify_api_key(req, config) {
     Error(msg) -> error_response(401, msg)
     Ok(Nil) -> {
-      let models =
-        agents
-        |> list.index_map(fn(ag, idx) {
-          let name = get_model_name(ag)
+      let combo_models =
+        combos
+        |> list.index_map(fn(c, idx) {
           json.object([
-            #("id", json.string(name)),
+            #("id", json.string(c.name)),
             #("object", json.string("model")),
             #("created", json.int(0)),
-            #("owned_by", json.string("glroute")),
+            #("owned_by", json.string("glroute-combo")),
+            #(
+              "strategy",
+              json.string(case c.strategy {
+                combo.Priority -> "priority"
+                combo.Fusion -> "fusion"
+              }),
+            ),
             #("index", json.int(idx)),
           ])
         })
 
+      let agent_models =
+        combos
+        |> list.flat_map(fn(c) {
+          list.map(c.agents, fn(ag) {
+            let name = get_model_name(ag)
+            json.object([
+              #("id", json.string(name)),
+              #("object", json.string("model")),
+              #("created", json.int(0)),
+              #("owned_by", json.string("glroute")),
+            ])
+          })
+        })
+        |> list.unique
+
+      let all_models = list.append(combo_models, agent_models)
+
       let body =
         json.object([
           #("object", json.string("list")),
-          #("data", json.preprocessed_array(models)),
+          #("data", json.preprocessed_array(all_models)),
         ])
         |> json.to_string
 
@@ -198,14 +235,14 @@ fn not_found_response() -> response.Response(mist.ResponseData) {
 
 fn handle_chat_completions(
   req: request.Request(mist.Connection),
-  agents: List(Agent(Nil, String)),
+  combos: List(Combo(Nil, String)),
   config: ServerConfig,
 ) -> response.Response(mist.ResponseData) {
   case verify_api_key(req, config) {
     Error(msg) -> error_response(401, msg)
     Ok(Nil) -> {
       case req.method {
-        http.Post -> handle_chat_post(req, agents)
+        http.Post -> handle_chat_post(req, combos)
         _ ->
           response.new(405)
           |> response.set_header("content-type", "application/json")
@@ -222,14 +259,14 @@ fn handle_chat_completions(
 
 fn handle_chat_post(
   req: request.Request(mist.Connection),
-  agents: List(Agent(Nil, String)),
+  combos: List(Combo(Nil, String)),
 ) -> response.Response(mist.ResponseData) {
   case mist.read_body(req, max_body_bytes) {
     Error(_) -> error_response(400, "invalid request body")
     Ok(req_with_body) -> {
       let body_string = bit_array.to_string(req_with_body.body)
       case body_string {
-        Ok(body_str) -> handle_chat_body(body_str, agents)
+        Ok(body_str) -> handle_chat_body(body_str, combos)
         Error(_) -> error_response(400, "invalid body encoding")
       }
     }
@@ -238,12 +275,12 @@ fn handle_chat_post(
 
 fn handle_chat_body(
   body_str: String,
-  agents: List(Agent(Nil, String)),
+  combos: List(Combo(Nil, String)),
 ) -> response.Response(mist.ResponseData) {
   case chat.parse_request(body_str) {
     Error(msg) -> error_response(400, msg)
     Ok(chat_req) -> {
-      case priority.route_chat(agents, chat_req) {
+      case combo.route_chat_from_combos(combos, chat_req) {
         Ok(completion) -> success_chat_response(completion, chat_req)
         Error(e) ->
           error_response(502, "all providers failed: " <> errors_to_string(e))
