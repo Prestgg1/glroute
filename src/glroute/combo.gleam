@@ -1,4 +1,5 @@
 import gleam/list
+import gleam/string
 import glroute/agent.{type Agent}
 import glroute/chat.{type ChatRequest, type Completion}
 import glroute/errors.{type GlrouteError, ProviderError}
@@ -84,13 +85,21 @@ pub fn find_combo(
   case combos {
     [] -> Error(ProviderError("glroute: no combos configured"))
     [first, ..] -> {
-      case list.find(combos, fn(c) { c.name == name }) {
+      let target_name = case string.split_once(name, "/") {
+        Ok(#(_, stripped)) -> stripped
+        Error(Nil) -> name
+      }
+      case list.find(combos, fn(c) { c.name == target_name || c.name == name }) {
         Ok(found) -> Ok(found)
         Error(Nil) -> {
-          case name == "default" || name == "auto" || name == "" {
+          case
+            target_name == "default"
+            || target_name == "auto"
+            || target_name == ""
+          {
             True -> Ok(default_or_first(combos, first))
             False -> {
-              case find_by_agent_model(combos, name) {
+              case find_by_agent_model(combos, target_name) {
                 Ok(c) -> Ok(c)
                 Error(Nil) -> Ok(default_or_first(combos, first))
               }
