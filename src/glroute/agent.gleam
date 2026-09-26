@@ -248,13 +248,13 @@ pub fn complete(
       Error(e) -> Error(ProviderError(e))
       Ok("") ->
         Ok(Completion(
-          body: raw,
+          body: chat.normalize_body(raw),
           model: model.model_name,
           served_by: model.model_name,
         ))
       Ok(upstream_model) ->
         Ok(Completion(
-          body: raw,
+          body: chat.normalize_body(raw),
           model: upstream_model,
           served_by: model.model_name,
         ))

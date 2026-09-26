@@ -69,6 +69,10 @@ fn do_build_body(
 @external(erlang, "glroute_chat_ffi", "validate_response")
 pub fn validate_response(body: String) -> Result(String, String)
 
+/// Normalize provider response body unwrapping any top-level data wrapper.
+@external(erlang, "glroute_chat_ffi", "normalize_body")
+pub fn normalize_body(body: String) -> String
+
 /// Render a completion as an OpenAI server-sent-events stream.
 pub fn to_sse(completion: Completion, request: ChatRequest) -> String {
   do_to_sse(completion.body, request.include_usage)

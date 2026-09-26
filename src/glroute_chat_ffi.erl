@@ -5,7 +5,7 @@
 %% content parts, provider extensions) are forwarded untouched.
 %% Requires OTP 27+ for the `json` module.
 
--export([parse_request/1, build_body/5, validate_response/1, to_sse/2, monotonic_time_ms/0, safe_run/1]).
+-export([parse_request/1, build_body/5, validate_response/1, normalize_body/1, to_sse/2, monotonic_time_ms/0, safe_run/1]).
 
 monotonic_time_ms() ->
     erlang:monotonic_time(millisecond).
@@ -66,17 +66,36 @@ put_default(Keys, Key, {some, Value}, Req) ->
         false -> Req#{Key => Value}
     end.
 
+normalize_body(Body) ->
+    try json:decode(Body) of
+        #{<<"data">> := #{<<"choices">> := _} = Inner} ->
+            iolist_to_binary(json:encode(Inner));
+        _ ->
+            Body
+    catch
+        _:_ -> Body
+    end.
+
+unwrap_resp(#{<<"data">> := #{<<"choices">> := _} = Inner}) ->
+    Inner;
+unwrap_resp(Resp) ->
+    Resp.
+
 validate_response(Body) ->
     try json:decode(Body) of
-        #{<<"choices">> := [_ | _]} = Resp ->
-            case maps:get(<<"model">>, Resp, null) of
-                M when is_binary(M) -> {ok, M};
-                _ -> {ok, <<>>}
-            end;
-        #{<<"error">> := _} ->
-            {error, <<"provider returned an error: ", (truncate(Body))/binary>>};
-        _ ->
-            {error, <<"no choices in provider response">>}
+        RawResp ->
+            Resp = unwrap_resp(RawResp),
+            case Resp of
+                #{<<"choices">> := [_ | _]} ->
+                    case maps:get(<<"model">>, Resp, null) of
+                        M when is_binary(M) -> {ok, M};
+                        _ -> {ok, <<>>}
+                    end;
+                #{<<"error">> := _} ->
+                    {error, <<"provider returned an error: ", (truncate(Body))/binary>>};
+                _ ->
+                    {error, <<"no choices in provider response">>}
+            end
     catch
         _:_ -> {error, <<"provider response is not valid JSON">>}
     end.
@@ -84,7 +103,7 @@ validate_response(Body) ->
 %% Re-emit a complete (non-streaming) completion as OpenAI SSE chunks:
 %% one delta chunk per choice, one finish chunk, optional usage chunk, [DONE].
 to_sse(Body, IncludeUsage) ->
-    Resp = json:decode(Body),
+    Resp = unwrap_resp(json:decode(Body)),
     Base = #{
         <<"id">> => maps:get(<<"id">>, Resp, <<"chatcmpl-glroute">>),
         <<"object">> => <<"chat.completion.chunk">>,
