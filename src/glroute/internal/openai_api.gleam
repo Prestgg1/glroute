@@ -92,7 +92,7 @@ fn chat_choice_decoder() -> decode.Decoder(#(Option(String), List(ToolCall))) {
 }
 
 pub fn parse_response(raw: String) -> Result(ChatResponse, String) {
-  let decoder = {
+  let standard_decoder = {
     use choices <- decode.field("choices", decode.list(chat_choice_decoder()))
     use usage <- decode.optional_field(
       "usage",
@@ -102,7 +102,17 @@ pub fn parse_response(raw: String) -> Result(ChatResponse, String) {
     decode.success(#(choices, usage))
   }
 
-  case json.parse(from: raw, using: decoder) {
+  let data_wrapped_decoder = {
+    use data <- decode.field("data", standard_decoder)
+    decode.success(data)
+  }
+
+  let parsed = case json.parse(from: raw, using: standard_decoder) {
+    Ok(val) -> Ok(val)
+    Error(_) -> json.parse(from: raw, using: data_wrapped_decoder)
+  }
+
+  case parsed {
     Ok(#(choices, usage)) -> {
       case choices {
         [] -> Error("No choices in response")
